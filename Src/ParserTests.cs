@@ -19,6 +19,8 @@ public static class ParserTests
         Comments();
         NegativeAndDecimals();
         RotParsed();
+        ColorParsed();
+        ErrorBadColor();
         ErrorUnclosedBrace();
         ErrorBadScale();
         ErrorUnknownNode();
@@ -124,6 +126,22 @@ public static class ParserTests
         var roots = Parser.Parse("cube((0, 0, 0), (1, 1, 1), (10, 20, 30))");
         Check("углы Эйлера читаются", roots[0].Rotation == new Vec3(10, 20, 30));
     }
+
+    private static void ColorParsed()
+    {
+        var roots = Parser.Parse("cube((0, 0, 0), (1, 1, 1), (0, 0, 0), \"#8b5a2b\")");
+        Check("цвет читается", roots[0].Color == "#8b5a2b");
+
+        var noColor = Parser.Parse("cube((0, 0, 0), (1, 1, 1), (0, 0, 0))");
+        Check("без цвета — null (серый по умолчанию)", noColor[0].Color == null);
+
+        var nested = Parser.Parse(
+            "cube((0,0,0),(1,1,1),(0,0,0), \"#111111\")\n{ cube((0,0,0),(1,1,1),(0,0,0), \"#222222\") }");
+        Check("цвет у ребёнка свой", nested[0].Children[0].Color == "#222222");
+    }
+
+    private static void ErrorBadColor() =>
+        CheckThrows("битый цвет", "cube((0,0,0),(1,1,1),(0,0,0), \"#zzz\")", "цвет");
 
     private static void ErrorUnclosedBrace() =>
         CheckThrows("незакрытая скобка {", "cube((0,0,0),(1,1,1),(0,0,0)) {", "не закрыта");

@@ -17,6 +17,9 @@ public sealed class ModelNode
     /// <summary>Поворот в градусах Эйлера (порядок Unity).</summary>
     public Vec3 Rotation;
 
+    /// <summary>Цвет в виде «#rrggbb»; null — дефолтный серый.</summary>
+    public string? Color;
+
     /// <summary>Дети (локальные трансформы).</summary>
     public List<ModelNode> Children = new();
 
@@ -64,10 +67,21 @@ public static class Parser
             node.Scale = ParseVec(lexer);
             lexer.Expect(TokenKind.Comma, ",");
             node.Rotation = ParseVec(lexer);
-            lexer.Expect(TokenKind.RParen, ")");
 
             if (node.Scale.X <= 0 || node.Scale.Y <= 0 || node.Scale.Z <= 0)
                 throw lexer.Error(head, "размер куба должен быть положительным по всем осям");
+
+            // Необязательный четвёртый аргумент — цвет «#rrggbb».
+            if (lexer.Peek().Kind == TokenKind.Comma)
+            {
+                lexer.Next();
+                var colorToken = lexer.Next();
+                if (colorToken.Kind != TokenKind.Color)
+                    throw lexer.Error(colorToken, $"ожидался цвет вида #rrggbb, а не «{colorToken.Text}»");
+                node.Color = colorToken.Text;
+            }
+
+            lexer.Expect(TokenKind.RParen, ")");
         }
         else if (head.Text == "empty")
         {

@@ -10,9 +10,9 @@ namespace Modeler;
 public sealed class ModelerApp : Application
 {
     private readonly string _cubesPath;
-    private readonly SKColor _color;
+    private readonly SKColor? _color;
 
-    public ModelerApp(string cubesPath, SKColor color)
+    public ModelerApp(string cubesPath, SKColor? color)
     {
         _cubesPath = cubesPath;
         _color = color;

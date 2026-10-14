@@ -23,6 +23,13 @@ public static class Shading
         return f > 1.25 ? 1.25 : f;
     }
 
+    /// <summary>Дефолтный цвет куба, если в разметке цвет не задан.</summary>
+    public static readonly SKColor DefaultColor = new(0x9a, 0x9a, 0x9a);
+
+    /// <summary>Разобрать цвет «#rrggbb»; null → дефолтный серый.</summary>
+    public static SKColor ParseColor(string? hex) =>
+        string.IsNullOrEmpty(hex) ? DefaultColor : SKColor.Parse(hex);
+
     /// <summary>Применить множитель к цвету.</summary>
     public static SKColor Apply(SKColor color, double factor)
     {

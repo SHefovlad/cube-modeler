@@ -25,7 +25,7 @@ public static class Program
             }
             try
             {
-                var color = args.Length > 3 ? SKColor.Parse(args[3]) : new SKColor(0xb0, 0x8d, 0x57);
+                var color = args.Length > 3 ? SKColor.Parse(args[3]) : (SKColor?)null;
                 PreviewSheet.Render(args[1], args[2], color);
                 return 0;
             }
@@ -62,36 +62,24 @@ public static class Program
             Console.WriteLine("  Modeler --test                              прогон тестов");
             Console.WriteLine("  Modeler --render <file.cubes> <out.png> [#color]   лист видов в PNG");
             Console.WriteLine("  Modeler <файл.cubes>                        разбор и печать дерева");
+            Console.WriteLine("  #rrggbb — принудительный цвет всех кубов (иначе цвет из разметки)");
             return 0;
         }
 
-        var viewerColor = args.FirstOrDefault(a => a.StartsWith("#")) is { } hex
-            ? SKColor.Parse(hex)
-            : new SKColor(0xb0, 0x8d, 0x57);
+        var colorArg = args.FirstOrDefault(a => a.StartsWith("#"));
 
-        BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+        BuildAvaloniaApp(file, colorArg).StartWithClassicDesktopLifetime(args);
         return 0;
     }
 
-    private static AppBuilder BuildAvaloniaApp() =>
-        AppBuilder.Configure(() => new ModelerApp(ResolvePath(args2: Environment.GetCommandLineArgs()), ParseColor(Environment.GetCommandLineArgs())))
+    private static AppBuilder BuildAvaloniaApp(string file, string? colorArg) =>
+        AppBuilder.Configure(() => new ModelerApp(file, ArgToColor(colorArg)))
             .UsePlatformDetect()
             .LogToTrace();
 
-    private static string ResolvePath(string[] args2)
-    {
-        for (int i = 1; i < args2.Length; i++)
-            if (!args2[i].StartsWith("--") && !args2[i].StartsWith("#"))
-                return args2[i];
-        return "model.cubes";
-    }
-
-    private static SKColor ParseColor(string[] args2)
-    {
-        foreach (var a in args2)
-            if (a.StartsWith("#")) return SKColor.Parse(a);
-        return new SKColor(0xb0, 0x8d, 0x57);
-    }
+    /// <summary>Преобразовать аргумент-цвет в SKColor; null — цвета берутся из разметки.</summary>
+    private static SKColor? ArgToColor(string? arg) =>
+        string.IsNullOrEmpty(arg) ? null : SKColor.Parse(arg);
 
     private static void Dump(List<ModelNode> nodes, int depth)
     {
@@ -101,7 +89,8 @@ public static class Program
             string head = node.IsCube
                 ? $"cube pos={node.Position} scale={node.Scale} rot={node.Rotation}"
                 : $"empty pos={node.Position} rot={node.Rotation}";
-            Console.WriteLine($"{indent}{head}   (строка {node.Line})");
+            string color = node.Color != null ? $" color={node.Color}" : "";
+            Console.WriteLine($"{indent}{head}{color}   (строка {node.Line})");
             Dump(node.Children, depth + 1);
         }
     }

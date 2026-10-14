@@ -1,7 +1,7 @@
 namespace Modeler;
 
 /// <summary>Разбор .cubes: токенизация (лексер).</summary>
-public enum TokenKind { Ident, Number, LParen, RParen, LBrace, RBrace, Comma, Eof }
+public enum TokenKind { Ident, Number, LParen, RParen, LBrace, RBrace, Comma, Color, Eof }
 
 public readonly record struct Token(TokenKind Kind, string Text, int Line);
 
@@ -43,6 +43,31 @@ public sealed class Lexer
 
         int startLine = _line;
 
+        // Цвет: "#rrggbb" (в кавычках, шесть hex-цифр).
+        if (c == '"')
+        {
+            int start = _pos;
+            _pos++;
+            if (_pos >= _text.Length || _text[_pos] != '#')
+                throw Error(new Token(TokenKind.Eof, "\"", startLine),
+                    "цвет записывается как \"#rrggbb\" (в кавычках, шесть hex-цифр)");
+            _pos++;
+
+            int digits = 0;
+            while (_pos < _text.Length && Uri.IsHexDigit(_text[_pos])) { _pos++; digits++; }
+            if (digits != 6)
+                throw Error(new Token(TokenKind.Eof, _text.Substring(start, _pos - start), startLine),
+                    "цвет записывается как \"#rrggbb\" (шесть hex-цифр)");
+
+            if (_pos >= _text.Length || _text[_pos] != '"')
+                throw Error(new Token(TokenKind.Eof, _text.Substring(start, _pos - start), startLine),
+                    "цвет не закрыт кавычкой");
+            _pos++;
+
+            return new Token(TokenKind.Color,
+                _text.Substring(start + 1, _pos - start - 2), startLine);
+        }
+
         if (char.IsLetter(c) || c == '_')
         {
             int start = _pos;
@@ -62,6 +87,15 @@ public sealed class Lexer
                 _pos++;
             }
             return new Token(TokenKind.Number, _text.Substring(start, _pos - start), startLine);
+        }
+
+        if (c == '#')
+        {
+            int start = _pos;
+            _pos++;
+            int digits = 0;
+            while (_pos < _text.Length && Uri.IsHexDigit(_text[_pos])) { _pos++; digits++; }
+            return new Token(TokenKind.Color, _text.Substring(start, _pos - start), startLine);
         }
 
         throw Error(new Token(TokenKind.Eof, c.ToString(), startLine),

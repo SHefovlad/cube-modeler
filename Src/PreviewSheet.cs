@@ -20,9 +20,9 @@ public static class PreviewSheet
     };
 
     /// <summary>Отрисовать лист со всеми видами и сохранить в PNG.</summary>
-    public static void Render(string cubesPath, string outPath, SKColor color)
+    public static void Render(string cubesPath, string outPath, SKColor? forceColor = null)
     {
-        var roots = Parser.ParseFile(cubesPath);
+        var roots = Resolver.Load(cubesPath);
         var cubes = TransformResolver.Resolve(roots);
 
         var outDir = Path.GetDirectoryName(Path.GetFullPath(outPath));
@@ -60,7 +60,7 @@ public static class PreviewSheet
             canvas.ClipRect(new SKRect(0, 0, PanelWidth, PanelHeight));
 
             var (kind, label) = Panels[i];
-            Renderer.Draw(canvas, PanelWidth, PanelHeight, cubes, kind, color);
+            Renderer.Draw(canvas, PanelWidth, PanelHeight, cubes, kind, forceColor);
 
             canvas.Restore();
             canvas.DrawText(label, x + 10, y + 24, labelPaint);

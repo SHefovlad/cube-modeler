@@ -25,7 +25,7 @@ public sealed class ViewerWindow : Window
     };
 
     private readonly string _cubesPath;
-    private readonly SKColor _color;
+    private readonly SKColor? _forceColor;
     private readonly Image _image = new();
     private readonly TextBlock _status = new();
     private WriteTimeSet _timestamps = new();
@@ -36,10 +36,10 @@ public sealed class ViewerWindow : Window
         public readonly List<(string Path, DateTime Time)> Includes = new();
     }
 
-    public ViewerWindow(string cubesPath, SKColor color)
+    public ViewerWindow(string cubesPath, SKColor? forceColor)
     {
         _cubesPath = Path.GetFullPath(cubesPath);
-        _color = color;
+        _forceColor = forceColor;
 
         Title = "Modeler — " + Path.GetFileName(_cubesPath);
         Width = 1180;
@@ -164,7 +164,7 @@ public sealed class ViewerWindow : Window
             canvas.Save();
             canvas.Translate(x, y);
             canvas.ClipRect(new SKRect(0, 0, w, h));
-            Renderer.Draw(canvas, w, h, cubes, Panels[i].Kind, _color);
+            Renderer.Draw(canvas, w, h, cubes, Panels[i].Kind, _forceColor);
             canvas.Restore();
 
             canvas.DrawText(Panels[i].Label, x + 10, y + 24, titleFont, titlePaint);

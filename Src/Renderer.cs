@@ -13,14 +13,16 @@ public static class Renderer
         public Vec3[] WorldPoints = Array.Empty<Vec3>();
         public Vec2[] ScreenPoints = Array.Empty<Vec2>();
         public Vec3 WorldNormal;
+        public SKColor Color;
         public double Depth;
     }
 
     /// <summary>
-    /// Нарисовать модель на канвасе. <paramref name="color"/> задаёт цвет куба (по умолчанию серый).
+    /// Нарисовать модель на канвасе. Цвет берётся у каждого куба (<see cref="WorldCube.Color"/>),
+    /// при отсутствии — дефолтный серый.
     /// </summary>
     public static void Draw(SKCanvas canvas, int width, int height, List<WorldCube> cubes,
-        ViewKind view, SKColor color, double margin = 24)
+        ViewKind view, SKColor? forceColor = null, double margin = 24)
     {
         var camRot = Projector.RotationFor(view);
         var faces = new List<Face>();
@@ -28,6 +30,8 @@ public static class Renderer
         foreach (var cube in cubes)
         {
             var corners = CubeGeometry.Corners(cube, out _);
+            var color = forceColor ?? Shading.ParseColor(cube.Color);
+
             for (int f = 0; f < CubeGeometry.Faces.Length; f++)
             {
                 var idx = CubeGeometry.Faces[f];
@@ -39,7 +43,7 @@ public static class Renderer
                 var world = new Vec3[4];
                 for (int i = 0; i < 4; i++) world[i] = corners[idx[i]];
 
-                faces.Add(new Face { WorldPoints = world, WorldNormal = normal });
+                faces.Add(new Face { WorldPoints = world, WorldNormal = normal, Color = color });
             }
         }
 
@@ -69,7 +73,7 @@ public static class Renderer
         foreach (var face in faces)
         {
             double factor = Shading.FactorFor(face.WorldNormal);
-            var fill = Shading.Apply(color, factor);
+            var fill = Shading.Apply(face.Color, factor);
 
             using var path = new SKPath();
             path.MoveTo((float)face.ScreenPoints[0].X, (float)face.ScreenPoints[0].Y);

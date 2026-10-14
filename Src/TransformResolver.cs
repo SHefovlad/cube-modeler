@@ -4,7 +4,8 @@ namespace Modeler;
 public readonly record struct WorldCube(
     Vec3 Position,   // центр куба в мире
     Vec3 Size,       // размеры куба в мире (уже с поправкой на скейл родителей)
-    Quat Rotation);  // мировой поворот
+    Quat Rotation,   // мировой поворот
+    string? Color);  // «#rrggbb» или null (дефолтный серый)
 
 /// <summary>
 /// Считает мировые трансформы листьев, сворачивая вложенность, как Unity:
@@ -39,7 +40,7 @@ public static class TransformResolver
             parentScale.Z * node.Scale.Z);
 
         if (node.IsCube)
-            result.Add(new WorldCube(worldPos, node.Scale * parentScale, worldRot));
+            result.Add(new WorldCube(worldPos, node.Scale * parentScale, worldRot, node.Color));
 
         foreach (var child in node.Children)
             ResolveNode(child, worldPos, worldRot, worldScale, result);
