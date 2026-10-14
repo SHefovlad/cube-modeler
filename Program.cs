@@ -1,9 +1,12 @@
+using Avalonia;
 using SkiaSharp;
 
 namespace Modeler;
 
 public static class Program
 {
+    /// <summary>Avalonia требует STA и свою инициализацию — точка входа приложения.</summary>
+    [STAThread]
     public static int Main(string[] args)
     {
         if (args.Length > 0 && args[0] == "--test")
@@ -11,24 +14,6 @@ public static class Program
             int a = ParserTests.Run();
             int b = GeometryTests.Run();
             return a == 0 && b == 0 ? 0 : 1;
-        }
-
-        if (args.Length > 0 && args[0] == "--watch")
-        {
-            if (args.Length < 2)
-            {
-                Console.Error.WriteLine("Использование: Modeler --watch <файл.cubes> [выход.png] [#rrggbb] [--open]");
-                return 2;
-            }
-            string cubesFile = args[1];
-            string png = args.Length > 2 && !args[2].StartsWith("--") && !args[2].StartsWith("#")
-                ? args[2]
-                : Path.ChangeExtension(cubesFile, ".png");
-            var watchColor = args.FirstOrDefault(a => a.StartsWith("#")) is { } hex
-                ? SKColor.Parse(hex)
-                : new SKColor(0xb0, 0x8d, 0x57);
-            bool open = args.Contains("--open");
-            return Watcher.Run(cubesFile, png, watchColor, open);
         }
 
         if (args.Length > 0 && args[0] == "--render")
@@ -51,11 +36,11 @@ public static class Program
             }
         }
 
-        if (args.Length > 0)
+        if (args.Length > 0 && args[0] != "--view")
         {
             try
             {
-                var roots = Parser.ParseFile(args[0]);
+                var roots = Resolver.Load(args[0]);
                 Dump(roots, 0);
                 var world = TransformResolver.Resolve(roots);
                 Console.WriteLine($"--- мировых кубов: {world.Count} ---");
@@ -68,12 +53,44 @@ public static class Program
             }
         }
 
-        Console.WriteLine("Modeler — конструктор моделей .cubes");
-        Console.WriteLine("  Modeler --test                          прогон тестов");
-        Console.WriteLine("  Modeler --render <file.cubes> <out.png> [#color]   лист видов в PNG");
-        Console.WriteLine("  Modeler --watch <file.cubes> [out.png] [#color] [--open]   живой предпросмотр");
-        Console.WriteLine("  Modeler <файл.cubes>                    разбор и печать дерева");
+        // По умолчанию — оконный просмотрщик.
+        string? file = args.Length > 1 ? args[1] : args.Length > 0 && args[0] != "--view" ? args[0] : null;
+        if (file == null)
+        {
+            Console.WriteLine("Modeler — конструктор моделей .cubes");
+            Console.WriteLine("  Modeler --view <файл.cubes> [#rrggbb]      окно с видами (по умолчанию)");
+            Console.WriteLine("  Modeler --test                              прогон тестов");
+            Console.WriteLine("  Modeler --render <file.cubes> <out.png> [#color]   лист видов в PNG");
+            Console.WriteLine("  Modeler <файл.cubes>                        разбор и печать дерева");
+            return 0;
+        }
+
+        var viewerColor = args.FirstOrDefault(a => a.StartsWith("#")) is { } hex
+            ? SKColor.Parse(hex)
+            : new SKColor(0xb0, 0x8d, 0x57);
+
+        BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
         return 0;
+    }
+
+    private static AppBuilder BuildAvaloniaApp() =>
+        AppBuilder.Configure(() => new ModelerApp(ResolvePath(args2: Environment.GetCommandLineArgs()), ParseColor(Environment.GetCommandLineArgs())))
+            .UsePlatformDetect()
+            .LogToTrace();
+
+    private static string ResolvePath(string[] args2)
+    {
+        for (int i = 1; i < args2.Length; i++)
+            if (!args2[i].StartsWith("--") && !args2[i].StartsWith("#"))
+                return args2[i];
+        return "model.cubes";
+    }
+
+    private static SKColor ParseColor(string[] args2)
+    {
+        foreach (var a in args2)
+            if (a.StartsWith("#")) return SKColor.Parse(a);
+        return new SKColor(0xb0, 0x8d, 0x57);
     }
 
     private static void Dump(List<ModelNode> nodes, int depth)
