@@ -1,3 +1,5 @@
+using SkiaSharp;
+
 namespace Modeler;
 
 public static class Program
@@ -11,12 +13,34 @@ public static class Program
             return a == 0 && b == 0 ? 0 : 1;
         }
 
+        if (args.Length > 0 && args[0] == "--render")
+        {
+            if (args.Length < 3)
+            {
+                Console.Error.WriteLine("Использование: Modeler --render <файл.cubes> <выход.png> [#rrggbb]");
+                return 2;
+            }
+            try
+            {
+                var color = args.Length > 3 ? SKColor.Parse(args[3]) : new SKColor(0xb0, 0x8d, 0x57);
+                PreviewSheet.Render(args[1], args[2], color);
+                return 0;
+            }
+            catch (CubeParseException ex)
+            {
+                Console.Error.WriteLine("Ошибка разбора: " + ex.Message);
+                return 2;
+            }
+        }
+
         if (args.Length > 0)
         {
             try
             {
                 var roots = Parser.ParseFile(args[0]);
                 Dump(roots, 0);
+                var world = TransformResolver.Resolve(roots);
+                Console.WriteLine($"--- мировых кубов: {world.Count} ---");
                 return 0;
             }
             catch (CubeParseException ex)
@@ -27,8 +51,9 @@ public static class Program
         }
 
         Console.WriteLine("Modeler — конструктор моделей .cubes");
-        Console.WriteLine("  Modeler --test             прогон тестов парсера");
-        Console.WriteLine("  Modeler <файл.cubes>       разбор и печать дерева");
+        Console.WriteLine("  Modeler --test                          прогон тестов");
+        Console.WriteLine("  Modeler --render <file.cubes> <out.png> [#color]   лист видов в PNG");
+        Console.WriteLine("  Modeler <файл.cubes>                    разбор и печать дерева");
         return 0;
     }
 
