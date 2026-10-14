@@ -13,6 +13,24 @@ public static class Program
             return a == 0 && b == 0 ? 0 : 1;
         }
 
+        if (args.Length > 0 && args[0] == "--watch")
+        {
+            if (args.Length < 2)
+            {
+                Console.Error.WriteLine("Использование: Modeler --watch <файл.cubes> [выход.png] [#rrggbb] [--open]");
+                return 2;
+            }
+            string cubesFile = args[1];
+            string png = args.Length > 2 && !args[2].StartsWith("--") && !args[2].StartsWith("#")
+                ? args[2]
+                : Path.ChangeExtension(cubesFile, ".png");
+            var watchColor = args.FirstOrDefault(a => a.StartsWith("#")) is { } hex
+                ? SKColor.Parse(hex)
+                : new SKColor(0xb0, 0x8d, 0x57);
+            bool open = args.Contains("--open");
+            return Watcher.Run(cubesFile, png, watchColor, open);
+        }
+
         if (args.Length > 0 && args[0] == "--render")
         {
             if (args.Length < 3)
@@ -53,6 +71,7 @@ public static class Program
         Console.WriteLine("Modeler — конструктор моделей .cubes");
         Console.WriteLine("  Modeler --test                          прогон тестов");
         Console.WriteLine("  Modeler --render <file.cubes> <out.png> [#color]   лист видов в PNG");
+        Console.WriteLine("  Modeler --watch <file.cubes> [out.png] [#color] [--open]   живой предпросмотр");
         Console.WriteLine("  Modeler <файл.cubes>                    разбор и печать дерева");
         return 0;
     }
