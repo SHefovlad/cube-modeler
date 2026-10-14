@@ -8,24 +8,14 @@ using SkiaSharp;
 
 namespace Modeler;
 
-/// <summary>
-/// Оконный просмотрщик модели: рисует все виды прямо на экране (без промежуточного PNG)
-/// и перерисовывает их при сохранении .cubes.
+/// Оконный просмотрщик: 10 плиток — 6 сторон + 4 угла «как в игре» (pitch −52°),
+/// прямо на экране (без промежуточного PNG), перерисовка при сохранении .cubes.
 /// </summary>
 public sealed class ViewerWindow : Window
 {
-    private static readonly (ViewKind Kind, string Label)[] Panels =
-    {
-        (ViewKind.Front, "Front (-Z)"),
-        (ViewKind.Back, "Back (+Z)"),
-        (ViewKind.Left, "Left (-X)"),
-        (ViewKind.Right, "Right (+X)"),
-        (ViewKind.Top, "Top (+Y)"),
-        (ViewKind.Iso, "Iso 52/45"),
-    };
-
     private readonly string _cubesPath;
     private readonly SKColor? _forceColor;
+    private readonly bool _isoVariants;
     private readonly Image _image = new();
     private readonly TextBlock _status = new();
     private WriteTimeSet _timestamps = new();
@@ -36,14 +26,15 @@ public sealed class ViewerWindow : Window
         public readonly List<(string Path, DateTime Time)> Includes = new();
     }
 
-    public ViewerWindow(string cubesPath, SKColor? forceColor)
+    public ViewerWindow(string cubesPath, SKColor? forceColor, bool isoVariants = false)
     {
         _cubesPath = Path.GetFullPath(cubesPath);
         _forceColor = forceColor;
+        _isoVariants = isoVariants;
 
-        Title = "Modeler — " + Path.GetFileName(_cubesPath);
+        Title = (isoVariants ? "Modeler (изометрия) — " : "Modeler — ") + Path.GetFileName(_cubesPath);
         Width = 1180;
-        Height = 820;
+        Height = isoVariants ? 780 : 820;
         Background = new SolidColorBrush(Color.Parse("#f2f4f7"));
 
         _image.Stretch = Stretch.Uniform;
@@ -140,9 +131,22 @@ public sealed class ViewerWindow : Window
 
     private WriteableBitmap Compose(List<WorldCube> cubes)
     {
-        const int cols = 3;
+        const int cols = 5;
         const int w = 380, h = 380, pad = 8;
-        int rows = (Panels.Length + cols - 1) / cols;
+        int count = PreviewSheet.Panels.Length;
+
+        if (_isoVariants)
+        {
+            int vw = 3 * w + 4 * pad;
+            int vh = 2 * h + 3 * pad;
+            using var vsurface = SKSurface.Create(new SKImageInfo(vw, vh));
+            var vcanvas = vsurface.Canvas;
+            vcanvas.Clear(new SKColor(0xf2, 0xf4, 0xf7));
+            PreviewSheet.ComposeIsoVariants(vcanvas, w, h, 3, pad, cubes);
+            return Snapshot(vsurface);
+        }
+
+        int rows = (count + cols - 1) / cols;
         int width = cols * w + (cols + 1) * pad;
         int height = rows * h + (rows + 1) * pad;
 
@@ -150,26 +154,19 @@ public sealed class ViewerWindow : Window
         var canvas = surface.Canvas;
         canvas.Clear(new SKColor(0xf2, 0xf4, 0xf7));
 
-        using var titleFont = new SKFont(SKTypeface.FromFamilyName("Segoe UI") ?? SKTypeface.Default, 18);
-        using var titlePaint = new SKPaint { Color = new SKColor(0x33, 0x33, 0x33), IsAntialias = true };
-
-        for (int i = 0; i < Panels.Length; i++)
+        for (int i = 0; i < count; i++)
         {
             float x = pad + i % cols * (w + pad);
             float y = pad + i / cols * (h + pad);
-
-            using (var bg = new SKPaint { Color = SKColors.White })
-                canvas.DrawRect(x, y, w, h, bg);
-
-            canvas.Save();
-            canvas.Translate(x, y);
-            canvas.ClipRect(new SKRect(0, 0, w, h));
-            Renderer.Draw(canvas, w, h, cubes, Panels[i].Kind, _forceColor);
-            canvas.Restore();
-
-            canvas.DrawText(Panels[i].Label, x + 10, y + 24, titleFont, titlePaint);
+            PreviewSheet.DrawPanel(canvas, x, y, w, h, cubes, i, _forceColor);
         }
 
+        return Snapshot(surface);
+    }
+
+    /// <summary>Снимок поверхности в WriteableBitmap.</summary>
+    private static WriteableBitmap Snapshot(SKSurface surface)
+    {
         using var image = surface.Snapshot();
         using var data = image.Encode(SKEncodedImageFormat.Png, 100);
         using var ms = new MemoryStream();

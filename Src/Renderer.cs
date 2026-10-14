@@ -18,13 +18,22 @@ public static class Renderer
     }
 
     /// <summary>
-    /// Нарисовать модель на канвасе. Цвет берётся у каждого куба (<see cref="WorldCube.Color"/>),
-    /// при отсутствии — дефолтный серый.
+    /// Нарисовать модель вида <paramref name="view"/>; цвет каждого куба берётся из разметки.
     /// </summary>
     public static void Draw(SKCanvas canvas, int width, int height, List<WorldCube> cubes,
         ViewKind view, SKColor? forceColor = null, double margin = 24)
     {
-        var camRot = Projector.RotationFor(view);
+        var (forward, up, right) = Projector.CameraAxes(view);
+        DrawWithAxes(canvas, width, height, cubes, forward, up, right, forceColor, margin);
+    }
+
+    /// <summary>
+    /// Нарисовать модель для произвольных осей камеры (нужно для перебора вариантов изометрии).
+    /// forward — направление взгляда; up — верх экрана; right — право экрана (все мировые, единичные).
+    /// </summary>
+    public static void DrawWithAxes(SKCanvas canvas, int width, int height, List<WorldCube> cubes,
+        Vec3 forward, Vec3 up, Vec3 right, SKColor? forceColor = null, double margin = 24)
+    {
         var faces = new List<Face>();
 
         foreach (var cube in cubes)
@@ -37,8 +46,8 @@ public static class Renderer
                 var idx = CubeGeometry.Faces[f];
                 var normal = Shading.Normalize(cube.Rotation.Rotate(CubeGeometry.FaceNormals[f]));
 
-                // Отсечение задних граней: нормаль в координатах камеры должна смотреть на неё.
-                if (camRot.Rotate(normal).Z <= 1e-9) continue;
+                // Отсечение задних граней: нормаль должна смотреть на камеру (против взгляда).
+                if (Dot(normal, forward) >= -1e-9) continue;
 
                 var world = new Vec3[4];
                 for (int i = 0; i < 4; i++) world[i] = corners[idx[i]];
@@ -49,12 +58,9 @@ public static class Renderer
 
         if (faces.Count == 0) return;
 
-        // Вписать все мировые точки в кадр, посчитать масштаб.
         var all = new List<Vec3>(faces.Count * 4);
         foreach (var face in faces) all.AddRange(face.WorldPoints);
-        var (focus, scale, offset) = Fit(all, view, width, height, margin);
-
-        var projector = new Projector(view, focus, scale);
+        var (focus, scale, offset) = Fit(all, forward, up, right, width, height, margin);
 
         foreach (var face in faces)
         {
@@ -62,13 +68,17 @@ public static class Renderer
             double depth = 0;
             for (int i = 0; i < 4; i++)
             {
-                face.ScreenPoints[i] = projector.Project(face.WorldPoints[i]) + offset;
-                depth += projector.Depth(face.WorldPoints[i]);
+                var local = face.WorldPoints[i] - focus;
+                double sx = Dot(local, right);
+                double sy = Dot(local, up);
+                double sz = Dot(local, forward);
+                face.ScreenPoints[i] = new Vec2(sx * scale + offset.X, -sy * scale + offset.Y);
+                depth += sz;
             }
             face.Depth = depth / 4.0;
         }
 
-        faces.Sort((a, b) => a.Depth.CompareTo(b.Depth)); // дальние первыми
+        faces.Sort((a, b) => b.Depth.CompareTo(a.Depth)); // дальние (большая глубина) первыми
 
         foreach (var face in faces)
         {
@@ -91,19 +101,19 @@ public static class Renderer
         }
     }
 
-    private static (Vec3 focus, double scale, Vec2 offset) Fit(List<Vec3> points, ViewKind view,
-        int width, int height, double margin)
+    private static (Vec3 focus, double scale, Vec2 offset) Fit(List<Vec3> points, Vec3 forward, Vec3 up,
+        Vec3 right, int width, int height, double margin)
     {
         var center = Bounds(points, out _, out _);
 
-        // Проецируем без масштаба, чтобы измерить габарит.
-        var probe = new Projector(view, center, 1.0);
         double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue;
         foreach (var p in points)
         {
-            var s = probe.Project(p);
-            minX = Math.Min(minX, s.X); maxX = Math.Max(maxX, s.X);
-            minY = Math.Min(minY, s.Y); maxY = Math.Max(maxY, s.Y);
+            var local = p - center;
+            double sx = Dot(local, right);
+            double sy = -Dot(local, up);
+            minX = Math.Min(minX, sx); maxX = Math.Max(maxX, sx);
+            minY = Math.Min(minY, sy); maxY = Math.Max(maxY, sy);
         }
 
         double spanX = Math.Max(maxX - minX, 1e-6);
@@ -127,4 +137,6 @@ public static class Renderer
         }
         return new Vec3((min.X + max.X) / 2, (min.Y + max.Y) / 2, (min.Z + max.Z) / 2);
     }
+
+    private static double Dot(Vec3 a, Vec3 b) => a.X * b.X + a.Y * b.Y + a.Z * b.Z;
 }

@@ -9,11 +9,63 @@ public static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        if (args.Length > 0 && args[0] == "--axes")
+        {
+            AxisProbe.Run();
+            return 0;
+        }
+
         if (args.Length > 0 && args[0] == "--test")
         {
             int a = ParserTests.Run();
             int b = GeometryTests.Run();
             return a == 0 && b == 0 ? 0 : 1;
+        }
+
+        if (args.Length > 0 && args[0] == "--iso-variants")
+        {
+            if (args.Length < 2)
+            {
+                Console.Error.WriteLine("Использование: Modeler --iso-variants <file.cubes> [out.png]");
+                return 2;
+            }
+            string cubesFile = args[1];
+            string png = args.Length > 2 && !args[2].StartsWith("#")
+                ? args[2]
+                : Path.ChangeExtension(cubesFile, null) + "_iso.png";
+            try
+            {
+                PreviewSheet.RenderIsoVariants(cubesFile, png);
+                return 0;
+            }
+            catch (CubeParseException ex)
+            {
+                Console.Error.WriteLine("Ошибка разбора: " + ex.Message);
+                return 2;
+            }
+        }
+
+        if (args.Length > 0 && args[0] == "--all-views")
+        {
+            if (args.Length < 2)
+            {
+                Console.Error.WriteLine("Использование: Modeler --all-views <file.cubes> [out.png]");
+                return 2;
+            }
+            string cubesFile = args[1];
+            string png = args.Length > 2 && !args[2].StartsWith("#")
+                ? args[2]
+                : Path.ChangeExtension(cubesFile, null) + "_allviews.png";
+            try
+            {
+                PreviewSheet.RenderAllViews(cubesFile, png);
+                return 0;
+            }
+            catch (CubeParseException ex)
+            {
+                Console.Error.WriteLine("Ошибка разбора: " + ex.Message);
+                return 2;
+            }
         }
 
         if (args.Length > 0 && args[0] == "--render")
@@ -61,19 +113,22 @@ public static class Program
             Console.WriteLine("  Modeler --view <файл.cubes> [#rrggbb]      окно с видами (по умолчанию)");
             Console.WriteLine("  Modeler --test                              прогон тестов");
             Console.WriteLine("  Modeler --render <file.cubes> <out.png> [#color]   лист видов в PNG");
+            Console.WriteLine("  Modeler --iso-variants <file.cubes> [out.png]      4 угла (для выбора ракурса)");
+            Console.WriteLine("  Modeler --all-views <file.cubes> [out.png]         ВСЕ ракурсы: 8 азимутов × 10 наклонов");
             Console.WriteLine("  Modeler <файл.cubes>                        разбор и печать дерева");
             Console.WriteLine("  #rrggbb — принудительный цвет всех кубов (иначе цвет из разметки)");
             return 0;
         }
 
         var colorArg = args.FirstOrDefault(a => a.StartsWith("#"));
+        bool isoVariants = args.Contains("--iso-variants");
 
-        BuildAvaloniaApp(file, colorArg).StartWithClassicDesktopLifetime(args);
+        BuildAvaloniaApp(file, colorArg, isoVariants).StartWithClassicDesktopLifetime(args);
         return 0;
     }
 
-    private static AppBuilder BuildAvaloniaApp(string file, string? colorArg) =>
-        AppBuilder.Configure(() => new ModelerApp(file, ArgToColor(colorArg)))
+    private static AppBuilder BuildAvaloniaApp(string file, string? colorArg, bool isoVariants = false) =>
+        AppBuilder.Configure(() => new ModelerApp(file, ArgToColor(colorArg), isoVariants))
             .UsePlatformDetect()
             .LogToTrace();
 
