@@ -1,5 +1,7 @@
+using System.Runtime.InteropServices;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
@@ -8,16 +10,37 @@ using SkiaSharp;
 
 namespace Modeler;
 
-/// Оконный просмотрщик: 10 плиток — 6 сторон + 4 угла «как в игре» (pitch −52°),
-/// прямо на экране (без промежуточного PNG), перерисовка при сохранении .cubes.
+/// <summary>
+/// Оконный просмотрщик: сверху 6 плиток (Front/Back/Left/Right/Top/Bottom),
+/// снизу большое полотно — модель крутится перетаскиванием мыши по горизонтали.
+/// Наклон всегда один (игровой, −52°), меняется только азимут.
+/// Перерисовка при сохранении .cubes.
 /// </summary>
 public sealed class ViewerWindow : Window
 {
+    /// <summary>Наклон камеры: как в игре (−52°). Мышью не меняется.</summary>
+    private const double InteractivePitch = -Projector.IsoPitch;
+
+    /// <summary>Сколько градусов азимута на пиксель перетаскивания.</summary>
+    private const double YawPerPixel = 0.4;
+
+    private const int TileW = 192, TileH = 208, TilePad = 8, TileCount = 6;
+    private const int BigW = 1120, BigH = 430;
+
     private readonly string _cubesPath;
     private readonly SKColor? _forceColor;
     private readonly bool _isoVariants;
-    private readonly Image _image = new();
+
+    private readonly Image _tilesImage = new();
+    private readonly Image _interactiveImage = new();
+    private readonly Border _interactiveHost = new();
     private readonly TextBlock _status = new();
+    private readonly TextBlock _yawLabel = new();
+
+    private List<WorldCube> _cubes = new();
+    private double _yaw = Projector.IsoYaw;   // стартовый азимут — игровой (45°)
+    private bool _dragging;
+    private double _lastX;
     private WriteTimeSet _timestamps = new();
 
     private sealed class WriteTimeSet
@@ -32,13 +55,29 @@ public sealed class ViewerWindow : Window
         _forceColor = forceColor;
         _isoVariants = isoVariants;
 
-        Title = (isoVariants ? "Modeler (изометрия) — " : "Modeler — ") + Path.GetFileName(_cubesPath);
+        Title = Path.GetFileName(_cubesPath) + " — Modeler";
         Width = 1180;
-        Height = isoVariants ? 780 : 820;
+        Height = 900;
         Background = new SolidColorBrush(Color.Parse("#f2f4f7"));
 
-        _image.Stretch = Stretch.Uniform;
-        _status.Margin = new Thickness(10, 6, 10, 0);
+        _tilesImage.Stretch = Stretch.Uniform;
+        _interactiveImage.Stretch = Stretch.Uniform;
+
+        _interactiveHost.Background = Brushes.Transparent; // чтобы ловил события мыши
+        _yawLabel.Margin = new Thickness(12, 8, 0, 0);
+        _yawLabel.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left;
+        _yawLabel.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Top;
+        _yawLabel.FontFamily = new FontFamily("Segoe UI");
+        _yawLabel.FontSize = 14;
+        _yawLabel.Foreground = new SolidColorBrush(Color.Parse("#555555"));
+        _yawLabel.IsHitTestVisible = false; // не перехватывает перетаскивание
+        _interactiveHost.Child = new Grid { Children = { _interactiveImage, _yawLabel } };
+        _interactiveHost.Cursor = new Cursor(StandardCursorType.SizeWestEast);
+        _interactiveHost.PointerPressed += OnPressed;
+        _interactiveHost.PointerMoved += OnMoved;
+        _interactiveHost.PointerReleased += OnReleased;
+
+        _status.Margin = new Thickness(10, 6, 10, 2);
         _status.FontFamily = new FontFamily("Segoe UI");
         _status.Foreground = new SolidColorBrush(Color.Parse("#333333"));
 
@@ -47,7 +86,8 @@ public sealed class ViewerWindow : Window
             Children =
             {
                 TopDock(_status),
-                _image,
+                TopDock(_tilesImage),
+                _interactiveHost,
             },
         };
 
@@ -62,6 +102,41 @@ public sealed class ViewerWindow : Window
     {
         DockPanel.SetDock(child, Dock.Top);
         return child;
+    }
+
+    // --- Перетаскивание: меняем только азимут ---
+
+    private void OnPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (!e.GetCurrentPoint(_interactiveHost).Properties.IsLeftButtonPressed) return;
+        _dragging = true;
+        _lastX = e.GetPosition(_interactiveHost).X;
+        e.Pointer.Capture(_interactiveHost);
+    }
+
+    private void OnMoved(object? sender, PointerEventArgs e)
+    {
+        if (!_dragging) return;
+        double x = e.GetPosition(_interactiveHost).X;
+        _yaw -= (x - _lastX) * YawPerPixel;
+        _lastX = x;
+        DragRedraw();
+    }
+
+    private void OnReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        if (!_dragging) return;
+        _dragging = false;
+        e.Pointer.Capture(null);
+        RenderInteractive(fast: false); // уточняем картинку после отпускания
+        UpdateStatus();
+    }
+
+    /// <summary>Перерисовать большое полотно быстро (без сглаживания) на время перетаскивания.</summary>
+    private void DragRedraw()
+    {
+        _interactiveImage.Source = ComposeInteractive(_cubes, fast: true);
+        UpdateStatus();
     }
 
     private void StartPolling()
@@ -85,7 +160,6 @@ public sealed class ViewerWindow : Window
             return true;
         }
 
-        // Перечитать список include-файлов и их время.
         var includes = Resolver.CollectIncludes(_cubesPath);
         if (includes.Count != _timestamps.Includes.Count) return RefreshIncludes(includes);
 
@@ -109,18 +183,29 @@ public sealed class ViewerWindow : Window
         try
         {
             var roots = Resolver.Load(_cubesPath);
-            var cubes = TransformResolver.Resolve(roots);
+            _cubes = TransformResolver.Resolve(roots);
             _timestamps = new WriteTimeSet
             {
                 Cubes = File.GetLastWriteTimeUtc(_cubesPath),
             };
             _timestamps.Includes.AddRange(Resolver.CollectIncludes(_cubesPath));
-            _image.Source = Compose(cubes);
-            _status.Text = $"{Path.GetFileName(_cubesPath)}   ·   кубов: {cubes.Count}   ·   обновлено {DateTime.Now:HH:mm:ss}";
+
+            if (_isoVariants)
+            {
+                _tilesImage.Source = ComposeIsoVariants(_cubes);
+                _interactiveHost.IsVisible = false;
+            }
+            else
+            {
+                _tilesImage.Source = ComposeTiles(_cubes);
+                _interactiveHost.IsVisible = true;
+                RenderInteractive(fast: false);
+            }
+            UpdateStatus();
         }
         catch (CubeParseException ex)
         {
-            _image.Source = ErrorBitmap(ex.Message);
+            _tilesImage.Source = ErrorBitmap(ex.Message);
             _status.Text = "Ошибка: " + ex.Message;
         }
         catch (IOException)
@@ -129,38 +214,81 @@ public sealed class ViewerWindow : Window
         }
     }
 
-    private WriteableBitmap Compose(List<WorldCube> cubes)
+    private void RenderInteractive(bool fast) =>
+        _interactiveImage.Source = ComposeInteractive(_cubes, fast);
+
+    private void UpdateStatus()
     {
-        const int cols = 5;
-        const int w = 380, h = 380, pad = 8;
-        int count = PreviewSheet.Panels.Length;
+        string mode = _isoVariants
+            ? "изометрия"
+            : $"азимут {Norm(_yaw):0}° · наклон {InteractivePitch:0}° (мышью — влево/вправо)";
+        _status.Text = $"{Path.GetFileName(_cubesPath)}   ·   кубов: {_cubes.Count}"
+            + $"   ·   {mode}   ·   обновлено {DateTime.Now:HH:mm:ss}";
+        _yawLabel.Text = $"азимут {Norm(_yaw):0}°";
+    }
 
-        if (_isoVariants)
-        {
-            int vw = 3 * w + 4 * pad;
-            int vh = 2 * h + 3 * pad;
-            using var vsurface = SKSurface.Create(new SKImageInfo(vw, vh));
-            var vcanvas = vsurface.Canvas;
-            vcanvas.Clear(new SKColor(0xf2, 0xf4, 0xf7));
-            PreviewSheet.ComposeIsoVariants(vcanvas, w, h, 3, pad, cubes);
-            return Snapshot(vsurface);
-        }
+    /// <summary>Привести угол к диапазону 0..360 для подписи.</summary>
+    private static double Norm(double deg)
+    {
+        deg %= 360;
+        return deg < 0 ? deg + 360 : deg;
+    }
 
-        int rows = (count + cols - 1) / cols;
-        int width = cols * w + (cols + 1) * pad;
-        int height = rows * h + (rows + 1) * pad;
+    /// <summary>6 плиток сторон в один ряд (Front/Back/Left/Right/Top/Bottom).</summary>
+    private WriteableBitmap ComposeTiles(List<WorldCube> cubes)
+    {
+        int width = TileCount * TileW + (TileCount + 1) * TilePad;
+        int height = TileH + 2 * TilePad;
 
         using var surface = SKSurface.Create(new SKImageInfo(width, height));
         var canvas = surface.Canvas;
-        canvas.Clear(new SKColor(0xf2, 0xf4, 0xf7));
+        canvas.Clear(Renderer.Background);
 
-        for (int i = 0; i < count; i++)
+        for (int i = 0; i < TileCount; i++)
+            PreviewSheet.DrawPanel(canvas, TilePad + i * (TileW + TilePad), TilePad,
+                TileW, TileH, cubes, i, _forceColor, margin: 12);
+
+        return Snapshot(surface);
+    }
+
+    /// <summary>Большое полотно с поворотом по азимуту (наклон фиксирован).</summary>
+    private WriteableBitmap ComposeInteractive(List<WorldCube> cubes, bool fast)
+    {
+        if (cubes.Count == 0)
+            return ToWriteableBitmap(new byte[BigW * BigH * 4], BigW, BigH);
+
+        var axes = Projector.IsoAxesByYawPitch(_yaw, InteractivePitch);
+        var pixels = ZRenderer.RenderPixels(BigW, BigH, cubes, axes.Forward, axes.Up, axes.Right,
+            Renderer.Background, _forceColor, margin: 26,
+            samples: fast ? 1 : ZRenderer.DefaultSamples);
+        return ToWriteableBitmap(pixels, BigW, BigH);
+    }
+
+    /// <summary>Сырые пиксели BGRA → WriteableBitmap напрямую (одна копия по строкам, без PNG).</summary>
+    private static WriteableBitmap ToWriteableBitmap(byte[] pixels, int width, int height)
+    {
+        var wb = new WriteableBitmap(new PixelSize(width, height), new Vector(96, 96),
+            PixelFormat.Bgra8888, AlphaFormat.Premul);
+        using (var fb = wb.Lock())
         {
-            float x = pad + i % cols * (w + pad);
-            float y = pad + i / cols * (h + pad);
-            PreviewSheet.DrawPanel(canvas, x, y, w, h, cubes, i, _forceColor);
+            int rowBytes = width * 4;
+            for (int y = 0; y < height; y++)
+                Marshal.Copy(pixels, y * rowBytes, IntPtr.Add(fb.Address, y * fb.RowBytes), rowBytes);
         }
+        return wb;
+    }
 
+    /// <summary>Лист вариантов изометрии (режим --iso-variants), 3×2.</summary>
+    private WriteableBitmap ComposeIsoVariants(List<WorldCube> cubes)
+    {
+        const int cols = 3, pad = TilePad;
+        int width = 3 * 380 + 4 * pad;
+        int height = 2 * 380 + 3 * pad;
+
+        using var surface = SKSurface.Create(new SKImageInfo(width, height));
+        var canvas = surface.Canvas;
+        canvas.Clear(Renderer.Background);
+        PreviewSheet.ComposeIsoVariants(canvas, 380, 380, cols, pad, cubes);
         return Snapshot(surface);
     }
 

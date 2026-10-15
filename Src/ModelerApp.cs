@@ -17,6 +17,7 @@ public sealed class ModelerApp : Application
     {
         _cubesPath = cubesPath;
         _color = color;
+        _isoVariants = isoVariants;
     }
 
     public override void Initialize()

@@ -19,7 +19,8 @@ public static class Program
         {
             int a = ParserTests.Run();
             int b = GeometryTests.Run();
-            return a == 0 && b == 0 ? 0 : 1;
+            int c = RenderTests.Run();
+            return a == 0 && b == 0 && c == 0 ? 0 : 1;
         }
 
         if (args.Length > 0 && args[0] == "--iso-variants")
