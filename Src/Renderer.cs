@@ -10,8 +10,8 @@ public static class Renderer
 {
     private sealed class Face
     {
-        public Vec3[] WorldPoints = Array.Empty<Vec3>();
-        public Vec2[] ScreenPoints = Array.Empty<Vec2>();
+        public Vec3[][] Triangles = Array.Empty<Vec3[]>();
+        public Vec2[][] ScreenTriangles = Array.Empty<Vec2[]>();
         public Vec3 WorldNormal;
         public SKColor Color;
         public double Depth;
@@ -34,7 +34,8 @@ public static class Renderer
     public static void DrawWithAxes(SKCanvas canvas, int width, int height, List<WorldCube> cubes,
         Vec3 forward, Vec3 up, Vec3 right, SKColor? forceColor = null, double margin = 24)
     {
-        var faces = new List<Face>();
+        // Собираем все треугольники граней (передние — нормаль смотрит на камеру).
+        var triangles = new List<(Vec3 A, Vec3 B, Vec3 C, Vec3 Normal, SKColor Color)>();
 
         foreach (var cube in cubes)
         {
@@ -49,56 +50,24 @@ public static class Renderer
                 // Отсечение задних граней: нормаль должна смотреть на камеру (против взгляда).
                 if (Dot(normal, forward) >= -1e-9) continue;
 
-                var world = new Vec3[4];
-                for (int i = 0; i < 4; i++) world[i] = corners[idx[i]];
-
-                faces.Add(new Face { WorldPoints = world, WorldNormal = normal, Color = color });
+                triangles.Add((corners[idx[0]], corners[idx[1]], corners[idx[2]], normal, color));
+                triangles.Add((corners[idx[0]], corners[idx[2]], corners[idx[3]], normal, color));
             }
         }
 
-        if (faces.Count == 0) return;
+        if (triangles.Count == 0) return;
 
-        var all = new List<Vec3>(faces.Count * 4);
-        foreach (var face in faces) all.AddRange(face.WorldPoints);
+        var all = new List<Vec3>(triangles.Count * 3);
+        foreach (var t in triangles) { all.Add(t.A); all.Add(t.B); all.Add(t.C); }
         var (focus, scale, offset) = Fit(all, forward, up, right, width, height, margin);
 
-        foreach (var face in faces)
-        {
-            face.ScreenPoints = new Vec2[4];
-            double depth = 0;
-            for (int i = 0; i < 4; i++)
-            {
-                var local = face.WorldPoints[i] - focus;
-                double sx = Dot(local, right);
-                double sy = Dot(local, up);
-                double sz = Dot(local, forward);
-                face.ScreenPoints[i] = new Vec2(sx * scale + offset.X, -sy * scale + offset.Y);
-                depth += sz;
-            }
-            face.Depth = depth / 4.0;
-        }
+        // Z-буфер: порядок треугольников не важен, побеждает ближайший фрагмент.
+        var raster = new ZBufferRasterizer(width, height, focus, scale, offset, forward, up, right,
+            new SKColor(0xf2, 0xf4, 0xf7));
+        foreach (var t in triangles)
+            raster.AddTriangle(t.A, t.B, t.C, t.Color, t.Normal);
 
-        faces.Sort((a, b) => b.Depth.CompareTo(a.Depth)); // дальние (большая глубина) первыми
-
-        foreach (var face in faces)
-        {
-            double factor = Shading.FactorFor(face.WorldNormal);
-            var fill = Shading.Apply(face.Color, factor);
-
-            using var path = new SKPath();
-            path.MoveTo((float)face.ScreenPoints[0].X, (float)face.ScreenPoints[0].Y);
-            for (int i = 1; i < 4; i++)
-                path.LineTo((float)face.ScreenPoints[i].X, (float)face.ScreenPoints[i].Y);
-            path.Close();
-
-            using var paint = new SKPaint
-            {
-                Color = fill,
-                Style = SKPaintStyle.Fill,
-                IsAntialias = true,
-            };
-            canvas.DrawPath(path, paint);
-        }
+        raster.Blit(canvas);
     }
 
     private static (Vec3 focus, double scale, Vec2 offset) Fit(List<Vec3> points, Vec3 forward, Vec3 up,
