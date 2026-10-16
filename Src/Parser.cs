@@ -23,8 +23,11 @@ public sealed class ModelNode
     /// <summary>Дети (локальные трансформы).</summary>
     public List<ModelNode> Children = new();
 
-    /// <summary>Имя узла для отладки (заполняется парсером: "cube" / "empty").</summary>
+    /// <summary>Имя узла для отладки (заполняется парсером: "cube" / "empty" / "include").</summary>
     public string Kind = "cube";
+
+    /// <summary>Путь подключаемого файла — только у узла include; иначе null.</summary>
+    public string? IncludePath;
 
     /// <summary>Строка исходника (1-based) — для сообщений об ошибках.</summary>
     public int Line;
@@ -90,10 +93,42 @@ public static class Parser
             node.Scale = new Vec3(1, 1, 1);
 
             lexer.Expect(TokenKind.LParen, "(");
-            node.Position = ParseVec(lexer);
-            lexer.Expect(TokenKind.Comma, ",");
-            node.Rotation = ParseVec(lexer);
+
+            // Аргументы необязательны и идут по порядку: позиция, скейл, поворот.
+            // Два вектора — исторически (позиция, поворот): скейл остаётся 1.
+            var args = ParseVecArgs(lexer);
+            if (args.Count == 1) node.Position = args[0];
+            else if (args.Count == 2) { node.Position = args[0]; node.Rotation = args[1]; }
+            else if (args.Count == 3) { node.Position = args[0]; node.Scale = args[1]; node.Rotation = args[2]; }
+            else if (args.Count > 3)
+                throw lexer.Error(head, "у empty не больше трёх векторов: (позиция), (скейл), (поворот)");
+
             lexer.Expect(TokenKind.RParen, ")");
+        }
+        else if (head.Text == "include")
+        {
+            node.IsCube = false;
+            node.Kind = "include";
+            node.Scale = new Vec3(1, 1, 1);
+
+            lexer.Expect(TokenKind.LParen, "(");
+            var pathToken = lexer.Next();
+            if (pathToken.Kind != TokenKind.String)
+                throw lexer.Error(pathToken, $"ожидался путь в кавычках, а не «{pathToken.Text}»");
+            node.IncludePath = pathToken.Text;
+
+            // Либо только путь, либо путь и все три вектора: позиция, скейл, поворот.
+            // Запятая после пути — разделитель перед первым вектором.
+            if (lexer.Peek().Kind == TokenKind.Comma) lexer.Next();
+            var args = ParseVecArgs(lexer);
+            if (args.Count == 3) { node.Position = args[0]; node.Scale = args[1]; node.Rotation = args[2]; }
+            else if (args.Count != 0)
+                throw lexer.Error(head, "у include либо только путь, либо путь и три вектора: (позиция), (скейл), (поворот)");
+
+            lexer.Expect(TokenKind.RParen, ")");
+
+            if (lexer.Peek().Kind == TokenKind.LBrace)
+                throw lexer.Error(head, "у include не может быть блока «{ }» — подключаемый файл вставляется целиком");
         }
         else
         {
@@ -115,6 +150,21 @@ public static class Parser
         }
 
         return node;
+    }
+
+    /// <summary>Разобрать необязательный список векторов: первый — без ведущей запятой, дальше через «,».</summary>
+    private static List<Vec3> ParseVecArgs(Lexer lexer)
+    {
+        var args = new List<Vec3>();
+        if (lexer.Peek().Kind == TokenKind.RParen) return args;
+
+        args.Add(ParseVec(lexer));
+        while (lexer.Peek().Kind == TokenKind.Comma)
+        {
+            lexer.Next();
+            args.Add(ParseVec(lexer));
+        }
+        return args;
     }
 
     private static Vec3 ParseVec(Lexer lexer)

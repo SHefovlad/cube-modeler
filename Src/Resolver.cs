@@ -1,20 +1,18 @@
-using SkiaSharp;
-
 namespace Modeler;
 
 /// <summary>Разбор .cubes с поддержкой include других файлов.</summary>
 public static class Resolver
 {
-    /// <summary>Директива подключения другого файла: include("путь.cubes").</summary>
-    private const string IncludeKeyword = "include";
-
-    /// <summary>Прочитать модель, раскрывая include. Путь к include — относительно включающего файла.</summary>
+    /// <summary>
+    /// Прочитать модель, раскрывая include. Путь к include — относительно включающего файла.
+    /// Узел include превращается в empty-контейнер с тем же трансформом, а содержимое
+    /// подключённого файла становится его детьми (поэтому include уважает вложенность).
+    /// </summary>
     public static List<ModelNode> Load(string path)
     {
-        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var nodes = new List<ModelNode>();
-        LoadInto(Path.GetFullPath(path), nodes, visited);
-        return nodes;
+        string full = Path.GetFullPath(path);
+        var stack = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        return Expand(Parser.ParseFile(full), Path.GetDirectoryName(full)!, stack);
     }
 
     /// <summary>Собрать все файлы (сам + include), чтобы отслеживать их время изменения.</summary>
@@ -26,6 +24,49 @@ public static class Resolver
         return result;
     }
 
+    /// <summary>Заменить узлы include на empty-контейнер с детьми из подключённого файла.</summary>
+    private static List<ModelNode> Expand(List<ModelNode> nodes, string directory, HashSet<string> stack)
+    {
+        var result = new List<ModelNode>(nodes.Count);
+        foreach (var node in nodes)
+        {
+            if (node.Kind == "include")
+            {
+                string includePath = ResolveIncludePath(directory, node.IncludePath);
+                if (!stack.Add(includePath))
+                    throw new CubeParseException($"Циклический include: {includePath}");
+                if (!File.Exists(includePath))
+                    throw new CubeParseException($"Файл не найден: {includePath}");
+
+                var included = Expand(Parser.ParseFile(includePath),
+                    Path.GetDirectoryName(includePath)!, stack);
+                stack.Remove(includePath);
+
+                // include(путь, позиция, скейл, поворот) ≡ empty(позиция, скейл, поворот) { … }
+                result.Add(new ModelNode
+                {
+                    IsCube = false,
+                    Kind = "empty",
+                    Position = node.Position,
+                    Scale = node.Scale,
+                    Rotation = node.Rotation,
+                    Line = node.Line,
+                    Children = included,
+                });
+                continue;
+            }
+
+            if (node.Children.Count > 0)
+                node.Children = Expand(node.Children, directory, stack);
+            result.Add(node);
+        }
+        return result;
+    }
+
+    private static string ResolveIncludePath(string directory, string? includePath)
+        => Path.GetFullPath(Path.Combine(directory,
+            (includePath ?? string.Empty).Replace('\\', Path.DirectorySeparatorChar)));
+
     private static void Collect(string fullPath, List<(string, DateTime)> result, HashSet<string> visited)
     {
         if (!visited.Add(fullPath) || !File.Exists(fullPath)) return;
@@ -33,35 +74,6 @@ public static class Resolver
 
         foreach (var include in FindIncludes(fullPath))
             Collect(include, result, visited);
-    }
-
-    private static void LoadInto(string fullPath, List<ModelNode> nodes, HashSet<string> visited)
-    {
-        if (!visited.Add(fullPath))
-            throw new CubeParseException($"Циклический include: {fullPath}");
-        if (!File.Exists(fullPath))
-            throw new CubeParseException($"Файл не найден: {fullPath}");
-
-        string text = File.ReadAllText(fullPath);
-        var directory = Path.GetDirectoryName(fullPath)!;
-        int line = 0;
-
-        foreach (var rawLine in text.Split('\n'))
-        {
-            line++;
-            string trimmed = rawLine.Trim();
-
-            if (trimmed.StartsWith("include", StringComparison.Ordinal) && trimmed.Contains('('))
-            {
-                string inner = Between(trimmed, '(', ')');
-                string includePath = Unquote(inner.Trim());
-                LoadInto(Path.GetFullPath(Path.Combine(directory, includePath)), nodes, visited);
-            }
-        }
-
-        // Обычный разбор файла; include-строки парсер пропускает как комментарии.
-        var stripped = StripIncludes(text);
-        nodes.AddRange(Parser.Parse(stripped));
     }
 
     private static IEnumerable<string> FindIncludes(string fullPath)
@@ -73,34 +85,23 @@ public static class Resolver
         var directory = Path.GetDirectoryName(fullPath)!;
         foreach (var rawLine in text.Split('\n'))
         {
-            string trimmed = rawLine.Trim();
-            if (trimmed.StartsWith("include", StringComparison.Ordinal) && trimmed.Contains('('))
-            {
-                string inner = Between(trimmed, '(', ')');
-                yield return Path.GetFullPath(Path.Combine(directory, Unquote(inner.Trim())));
-            }
+            string? includePath = ExtractIncludePath(rawLine);
+            if (includePath != null)
+                yield return ResolveIncludePath(directory, includePath);
         }
     }
 
-    /// <summary>Заменить include-строки на пустые, чтобы обычный парсер их не видел.</summary>
-    private static string StripIncludes(string text)
+    /// <summary>Вытащить путь из строки вида include("путь", …). null — если строка не include.</summary>
+    private static string? ExtractIncludePath(string rawLine)
     {
-        var lines = text.Split('\n');
-        for (int i = 0; i < lines.Length; i++)
-        {
-            string trimmed = lines[i].Trim();
-            if (trimmed.StartsWith("include", StringComparison.Ordinal) && trimmed.Contains('('))
-                lines[i] = "// include";
-        }
-        return string.Join('\n', lines);
-    }
+        string trimmed = rawLine.Trim();
+        if (trimmed.StartsWith("//", StringComparison.Ordinal)) return null;
+        if (!trimmed.StartsWith("include", StringComparison.Ordinal)) return null;
 
-    private static string Between(string s, char open, char close)
-    {
-        int a = s.IndexOf(open);
-        int b = s.LastIndexOf(close);
-        return a >= 0 && b > a ? s.Substring(a + 1, b - a - 1) : "";
+        int a = trimmed.IndexOf('"');
+        if (a < 0) return null;
+        int b = trimmed.IndexOf('"', a + 1);
+        if (b < 0) return null;
+        return trimmed.Substring(a + 1, b - a - 1);
     }
-
-    private static string Unquote(string s) => s.Trim().Trim('"', '\'');
 }

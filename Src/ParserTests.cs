@@ -25,6 +25,10 @@ public static class ParserTests
         ErrorBadScale();
         ErrorUnknownNode();
         ErrorBadNumber();
+        EmptyArgForms();
+        IncludeForms();
+        ErrorIncludeTwoArgs();
+        ErrorIncludeBlock();
 
         Console.WriteLine($"[Tests] passed={_passed} failed={_failed}");
         return _failed == 0 ? 0 : 1;
@@ -154,4 +158,49 @@ public static class ParserTests
 
     private static void ErrorBadNumber() =>
         CheckThrows("мусор вместо числа", "cube((0, x, 0), (1,1,1), (0,0,0))", "ожидалось число");
+
+    private static void EmptyArgForms()
+    {
+        var none = Parser.Parse("empty()");
+        Check("empty() — всё по умолчанию",
+            none[0].Position == new Vec3(0, 0, 0) && none[0].Scale == new Vec3(1, 1, 1)
+            && none[0].Rotation == new Vec3(0, 0, 0));
+
+        var one = Parser.Parse("empty((234, 465, 35))");
+        Check("empty(позиция) — скейл 1, поворот 0",
+            one[0].Position == new Vec3(234, 465, 35) && one[0].Scale == new Vec3(1, 1, 1)
+            && one[0].Rotation == new Vec3(0, 0, 0));
+
+        var two = Parser.Parse("empty((657, 345, 756), (3425, 6457, 234))");
+        Check("empty(позиция, поворот) — как раньше, скейл 1",
+            two[0].Position == new Vec3(657, 345, 756) && two[0].Scale == new Vec3(1, 1, 1)
+            && two[0].Rotation == new Vec3(3425, 6457, 234));
+
+        var three = Parser.Parse("empty((657, 345, 756), (678, 23, 8), (3425, 6457, 234))");
+        Check("empty(позиция, скейл, поворот)",
+            three[0].Position == new Vec3(657, 345, 756) && three[0].Scale == new Vec3(678, 23, 8)
+            && three[0].Rotation == new Vec3(3425, 6457, 234));
+    }
+
+    private static void IncludeForms()
+    {
+        var plain = Parser.Parse("include(\"parts/roof.cubes\")");
+        Check("include — узел include с путём",
+            plain[0].Kind == "include" && plain[0].IncludePath == "parts/roof.cubes");
+        Check("include без трансформа — единичный",
+            plain[0].Position == new Vec3(0, 0, 0) && plain[0].Scale == new Vec3(1, 1, 1)
+            && plain[0].Rotation == new Vec3(0, 0, 0));
+
+        var full = Parser.Parse("include(\"кирка.cubes\", (1, 2, 3), (2, 2, 2), (0, 90, 0))");
+        Check("include с позицией/скейлом/поворотом",
+            full[0].IncludePath == "кирка.cubes" && full[0].Position == new Vec3(1, 2, 3)
+            && full[0].Scale == new Vec3(2, 2, 2) && full[0].Rotation == new Vec3(0, 90, 0));
+    }
+
+    private static void ErrorIncludeTwoArgs() =>
+        CheckThrows("include: два вектора запрещены",
+            "include(\"x.cubes\", (1, 2, 3), (4, 5, 6))", "три вектора");
+
+    private static void ErrorIncludeBlock() =>
+        CheckThrows("include: блок { } запрещён", "include(\"x.cubes\") { }", "блока");
 }
