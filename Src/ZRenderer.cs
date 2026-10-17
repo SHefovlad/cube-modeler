@@ -71,8 +71,10 @@ public static class ZRenderer
             double spanY = Math.Max(maxY - minY, 1e-9);
             double m = margin * ss;
             double scale = Math.Min((sw - 2 * m) / spanX, (sh - 2 * m) / spanY) * Math.Max(0.02, zoom);
-            double offX = sw / 2.0 - (minX + maxX) / 2.0 * scale + panX * ss;
-            double offY = sh / 2.0 - (minY + maxY) / 2.0 * scale + panY * ss;
+            // Панорама тоже масштабируется на zoom: приближение идёт ВОКРУГ ЦЕНТРА ЭКРАНА,
+            // а не вокруг пивота модели — иначе после сдвига зум тянет картинку к её центру.
+            double offX = sw / 2.0 - (minX + maxX) / 2.0 * scale + panX * ss * zoom;
+            double offY = sh / 2.0 - (minY + maxY) / 2.0 * scale + panY * ss * zoom;
 
             foreach (var cube in cubes)
             {

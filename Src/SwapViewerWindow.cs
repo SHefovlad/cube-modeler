@@ -177,6 +177,12 @@ public sealed class SwapViewerWindow : Window
 
     private void SwapWithSlot(int slot)
     {
+        // Плитка, которую «закрывают», возвращается в исходное состояние: без зума и сдвига.
+        var demoted = _tiles[_mainTile];
+        demoted.Zoom = 1;
+        demoted.PanX = 0;
+        demoted.PanY = 0;
+
         int clicked = _slotTiles[slot];
         _slotTiles[slot] = _mainTile;   // бывшая большая уходит в этот слот
         _mainTile = clicked;            // нажатая становится большой
