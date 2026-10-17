@@ -20,9 +20,11 @@ public static class ZRenderer
     public static void Draw(
         SKCanvas canvas, int width, int height, IReadOnlyList<WorldCube> cubes,
         Vec3 forward, Vec3 up, Vec3 right, SKColor background, SKColor? forceColor = null,
-        double margin = 24, int samples = DefaultSamples)
+        double margin = 24, int samples = DefaultSamples,
+        double zoom = 1.0, double panX = 0, double panY = 0)
     {
-        var pixels = RenderPixels(width, height, cubes, forward, up, right, background, forceColor, margin, samples);
+        var pixels = RenderPixels(width, height, cubes, forward, up, right, background, forceColor,
+            margin, samples, zoom, panX, panY);
         using var bitmap = new SKBitmap(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul));
         Marshal.Copy(pixels, 0, bitmap.GetPixels(), pixels.Length);
         canvas.DrawBitmap(bitmap, 0, 0);
@@ -35,7 +37,8 @@ public static class ZRenderer
     public static byte[] RenderPixels(
         int width, int height, IReadOnlyList<WorldCube> cubes,
         Vec3 forward, Vec3 up, Vec3 right, SKColor background, SKColor? forceColor = null,
-        double margin = 24, int samples = DefaultSamples)
+        double margin = 24, int samples = DefaultSamples,
+        double zoom = 1.0, double panX = 0, double panY = 0)
     {
         int ss = Math.Max(1, samples);
         int sw = width * ss;
@@ -67,9 +70,9 @@ public static class ZRenderer
             double spanX = Math.Max(maxX - minX, 1e-9);
             double spanY = Math.Max(maxY - minY, 1e-9);
             double m = margin * ss;
-            double scale = Math.Min((sw - 2 * m) / spanX, (sh - 2 * m) / spanY);
-            double offX = sw / 2.0 - (minX + maxX) / 2.0 * scale;
-            double offY = sh / 2.0 - (minY + maxY) / 2.0 * scale;
+            double scale = Math.Min((sw - 2 * m) / spanX, (sh - 2 * m) / spanY) * Math.Max(0.02, zoom);
+            double offX = sw / 2.0 - (minX + maxX) / 2.0 * scale + panX * ss;
+            double offY = sh / 2.0 - (minY + maxY) / 2.0 * scale + panY * ss;
 
             foreach (var cube in cubes)
             {

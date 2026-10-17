@@ -89,7 +89,9 @@ public static class Program
             }
         }
 
-        if (args.Length > 0 && args[0] != "--view")
+        bool classic = args.Contains("--classic");
+
+        if (args.Length > 0 && args[0] != "--view" && args[0] != "--classic")
         {
             try
             {
@@ -107,11 +109,16 @@ public static class Program
         }
 
         // По умолчанию — оконный просмотрщик.
-        string? file = args.Length > 1 ? args[1] : args.Length > 0 && args[0] != "--view" ? args[0] : null;
+        string? file = args.Length > 1 && !args[1].StartsWith("--")
+            ? args[1]
+            : args.Length > 0 && args[0] != "--view" && args[0] != "--classic"
+                ? args[0]
+                : null;
         if (file == null)
         {
             Console.WriteLine("Modeler — конструктор моделей .cubes");
-            Console.WriteLine("  Modeler --view <файл.cubes> [#rrggbb]      окно с видами (по умолчанию)");
+            Console.WriteLine("  Modeler --view <файл.cubes> [#rrggbb]      новый режим: плитки меняются местами");
+            Console.WriteLine("  Modeler --view <файл.cubes> --classic      классический режим (как раньше)");
             Console.WriteLine("  Modeler --test                              прогон тестов");
             Console.WriteLine("  Modeler --render <file.cubes> <out.png> [#color]   лист видов в PNG");
             Console.WriteLine("  Modeler --iso-variants <file.cubes> [out.png]      4 угла (для выбора ракурса)");
@@ -124,12 +131,13 @@ public static class Program
         var colorArg = args.FirstOrDefault(a => a.StartsWith("#"));
         bool isoVariants = args.Contains("--iso-variants");
 
-        BuildAvaloniaApp(file, colorArg, isoVariants).StartWithClassicDesktopLifetime(args);
+        BuildAvaloniaApp(file, colorArg, isoVariants, classic).StartWithClassicDesktopLifetime(args);
         return 0;
     }
 
-    private static AppBuilder BuildAvaloniaApp(string file, string? colorArg, bool isoVariants = false) =>
-        AppBuilder.Configure(() => new ModelerApp(file, ArgToColor(colorArg), isoVariants))
+    private static AppBuilder BuildAvaloniaApp(string file, string? colorArg, bool isoVariants = false,
+        bool classic = false) =>
+        AppBuilder.Configure(() => new ModelerApp(file, ArgToColor(colorArg), isoVariants, classic))
             .UsePlatformDetect()
             .LogToTrace();
 
