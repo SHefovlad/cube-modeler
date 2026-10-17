@@ -260,7 +260,13 @@ public sealed class SwapViewerWindow : Window
 
         var tile = _tiles[_mainTile];
         if (tile.IsDynamic) tile.Yaw -= dx * YawPerPixel;      // вращаем азимут
-        else { tile.PanX += dx; tile.PanY += dy; }             // сдвигаем вид
+        else
+        {
+            // Сдвиг в экранных пикселях, делённый на зум: картинка идёт за курсором 1:1
+            // при любом приближении (иначе на большом зуме она убегала бы в zoom раз быстрее).
+            tile.PanX += dx / tile.Zoom;
+            tile.PanY += dy / tile.Zoom;
+        }
 
         RenderMain(fast: true);                                 // без сглаживания — быстро
     }
