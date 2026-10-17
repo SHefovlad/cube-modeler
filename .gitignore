@@ -1,3 +1,22 @@
+# =====================================================================
+# .NET modeler (console app). Build output must never be committed.
+# =====================================================================
+
+# --- build output ---
 bin/
 obj/
+
+# --- IDE ---
+.vs/
+.idea/
+.vscode/
 *.user
+*.suo
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- local scratch ---
+*.log
