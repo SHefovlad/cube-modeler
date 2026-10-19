@@ -11,6 +11,9 @@ public sealed class Settings
     public int Msaa { get; set; } = 4;
     public int Ssaa { get; set; } = 3;
 
+    /// <summary>Верхний предел частоты кадров при взаимодействии. 0 — без ограничения.</summary>
+    public int Fps { get; set; } = 60;
+
     private static string FilePath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "Modeler", "settings.json");

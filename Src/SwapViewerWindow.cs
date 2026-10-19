@@ -45,10 +45,17 @@ public sealed class SwapViewerWindow : Window
     private readonly TextBlock[] _slotLabels = new TextBlock[SmallCount];
     private readonly TextBlock _status = new();
     private readonly TextBox _ssaaBox = new();
+    private readonly TextBox _fpsBox = new();
     private int _ssaa = ZRenderer.DefaultSamples;
+    private int _fps;
     private readonly bool _gpu;
     private readonly Settings _settings = Settings.Load();
     private BspTree? _tree;
+    private double _wheelAccum;
+    private bool _dirty;
+    private bool _pendingFast;
+    private DispatcherTimer? _frameTimer;
+    private DispatcherTimer? _settleTimer;
 
     private List<WorldCube> _cubes = new();
     private bool _dragging;
@@ -184,8 +191,29 @@ public sealed class SwapViewerWindow : Window
             Foreground = new SolidColorBrush(Color.Parse("#333333")),
         };
 
+        _fps = Math.Clamp(_settings.Fps, 0, 240);
+        _fpsBox.Width = 48;
+        _fpsBox.Text = _fps.ToString();
+        _fpsBox.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center;
+        _fpsBox.Margin = new Thickness(8, 4);
+        _fpsBox.TextChanged += OnFpsTextChanged;
+
+        var fpsLabel = new TextBlock
+        {
+            Text = "FPS",
+            FontFamily = new FontFamily("Segoe UI"),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            Foreground = new SolidColorBrush(Color.Parse("#333333")),
+        };
+
         var bar = new DockPanel { LastChildFill = true };
         DockPanel.SetDock(bar, Dock.Top);
+        var fpsDock = new DockPanel { LastChildFill = false };
+        DockPanel.SetDock(fpsDock, Dock.Right);
+        fpsDock.Children.Add(fpsLabel);
+        fpsDock.Children.Add(_fpsBox);
+        bar.Children.Add(fpsDock);
+
         var ssaaDock = new DockPanel { LastChildFill = false };
         DockPanel.SetDock(ssaaDock, Dock.Right);
         ssaaDock.Children.Add(ssaaLabel);
@@ -233,8 +261,9 @@ public sealed class SwapViewerWindow : Window
 
         if (_gpu)
         {
+            // При взаимодействии — один сэмпл: полное сглаживание дорисуем после остановки.
             using var bitmap = GpuRenderer.Render(w, h, _cubes, forward, up, right, SKColors.White, _forceColor,
-                margin: 16, msaa: _ssaa, zoom: tile.Zoom, panX: tile.PanX, panY: tile.PanY, tree: _tree);
+                margin: 16, msaa: fast ? 1 : _ssaa, zoom: tile.Zoom, panX: tile.PanX, panY: tile.PanY, tree: _tree);
             return ToWriteableBitmap(bitmap);
         }
 
@@ -285,8 +314,82 @@ public sealed class SwapViewerWindow : Window
         return wb;
     }
 
+    /// <summary>
+    /// Попросить кадр. Само событие мыши/колеса не рисует: оно только меняет состояние
+    /// и ставит флаг. Кадр делается один на всё накопленное — устаревшие запросы
+    /// схлопываются, поэтому очередь команд не выстраивается.
+    /// </summary>
+    private void RequestRender(bool fast)
+    {
+        _dirty = true;
+        _pendingFast |= fast;
+
+        _frameTimer ??= CreateFrameTimer();
+        if (!_frameTimer.IsEnabled) _frameTimer.Start();
+    }
+
+    private DispatcherTimer CreateFrameTimer()
+    {
+        var timer = new DispatcherTimer { Interval = FrameInterval };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            if (!_dirty) return;
+            _dirty = false;
+            bool fast = _pendingFast;
+            _pendingFast = false;
+            RenderMain(fast);
+        };
+        return timer;
+    }
+
+    /// <summary>Целевой интервал кадра. 0 в поле FPS — без ограничения.</summary>
+    private TimeSpan FrameInterval =>
+        TimeSpan.FromMilliseconds(_fps <= 0 ? 1 : 1000.0 / _fps);
+
+    private void OnFpsTextChanged(object? sender, TextChangedEventArgs e)
+    {
+        if (!int.TryParse(_fpsBox.Text?.Trim(), out int value)) return;
+        _fps = Math.Clamp(value, 0, 240);
+        _settings.Fps = _fps;
+        _settings.Save();
+        if (_frameTimer is not null) _frameTimer.Interval = FrameInterval;
+    }
+
+    /// <summary>Отрисовать немедленно, отбросив всё, что ещё стоит в очереди.</summary>
+    private void RenderNow(bool fast)
+    {
+        _dirty = false;
+        _pendingFast = false;
+        _frameTimer?.Stop();
+        _settleTimer?.Stop();
+        RenderMain(fast);
+    }
+
+    /// <summary>Через паузу после последнего движения дорисовать в полном качестве.</summary>
+    private void RestartSettle()
+    {
+        if (_settleTimer is null)
+        {
+            _settleTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
+            _settleTimer.Tick += (_, _) =>
+            {
+                _settleTimer!.Stop();
+                RenderNow(fast: false);      // взаимодействие закончилось — сразу полное качество
+            };
+        }
+
+        _settleTimer.Stop();
+        _settleTimer.Start();
+    }
+
     private void RenderAll()
     {
+        _dirty = false;
+        _pendingFast = false;
+        _frameTimer?.Stop();
+        _settleTimer?.Stop();
+
         for (int i = 0; i < SmallCount; i++)
         {
             var tile = _tiles[_slotTiles[i]];
@@ -334,7 +437,8 @@ public sealed class SwapViewerWindow : Window
             tile.PanY += dy / tile.Zoom;
         }
 
-        RenderMain(fast: true);                                 // без сглаживания — быстро
+        RequestRender(fast: true);                              // схлопывается с соседними событиями
+        RestartSettle();
     }
 
     private void OnMainReleased(object? sender, PointerReleasedEventArgs e)
@@ -342,14 +446,27 @@ public sealed class SwapViewerWindow : Window
         if (!_dragging) return;
         _dragging = false;
         e.Pointer.Capture(null);
-        RenderMain(fast: false);                                // уточняем картинку
+        RenderNow(fast: false);                                 // уточняем картинку сразу
     }
 
     private void OnWheel(object? sender, PointerWheelEventArgs e)
     {
-        var tile = _tiles[_mainTile];
-        tile.Zoom = Math.Clamp(tile.Zoom * Math.Pow(1.15, e.Delta.Y), 0.15, 8.0);
-        RenderMain(fast: false);
+        // Тачпад шлёт сотни мелких дробных дельт. Копим их и меняем зум шагами,
+        // иначе каждый тик давал бы доли процента, а рендер запускался бы на каждый.
+        _wheelAccum += e.Delta.Y;
+
+        const double step = 0.1;
+        if (Math.Abs(_wheelAccum) >= step)
+        {
+            double steps = Math.Truncate(_wheelAccum / step);
+            _wheelAccum -= steps * step;
+
+            var tile = _tiles[_mainTile];
+            tile.Zoom = Math.Clamp(tile.Zoom * Math.Pow(1.15, steps), 0.15, 8.0);
+            RequestRender(fast: true);
+            RestartSettle();
+        }
+
         e.Handled = true;
     }
 
