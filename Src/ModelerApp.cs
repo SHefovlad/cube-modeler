@@ -13,13 +13,16 @@ public sealed class ModelerApp : Application
     private readonly SKColor? _color;
     private readonly bool _isoVariants;
     private readonly bool _classic;
+    private readonly bool _gpu;
 
-    public ModelerApp(string cubesPath, SKColor? color, bool isoVariants = false, bool classic = false)
+    public ModelerApp(string cubesPath, SKColor? color, bool isoVariants = false, bool classic = false,
+        bool gpu = true)
     {
         _cubesPath = cubesPath;
         _color = color;
         _isoVariants = isoVariants;
         _classic = classic;
+        _gpu = gpu;
     }
 
     public override void Initialize()
@@ -35,7 +38,7 @@ public sealed class ModelerApp : Application
             // Режим углов живёт только в классическом окне.
             desktop.MainWindow = _classic || _isoVariants
                 ? new ViewerWindow(_cubesPath, _color, _isoVariants)
-                : new SwapViewerWindow(_cubesPath, _color);
+                : new SwapViewerWindow(_cubesPath, _color, _gpu);
         }
 
         base.OnFrameworkInitializationCompleted();

@@ -44,6 +44,11 @@ public sealed class SwapViewerWindow : Window
     private readonly Image[] _slotImages = new Image[SmallCount];
     private readonly TextBlock[] _slotLabels = new TextBlock[SmallCount];
     private readonly TextBlock _status = new();
+    private readonly TextBox _ssaaBox = new();
+    private int _ssaa = ZRenderer.DefaultSamples;
+    private readonly bool _gpu;
+    private readonly Settings _settings = Settings.Load();
+    private BspTree? _tree;
 
     private List<WorldCube> _cubes = new();
     private bool _dragging;
@@ -56,10 +61,11 @@ public sealed class SwapViewerWindow : Window
         public readonly List<(string Path, DateTime Time)> Includes = new();
     }
 
-    public SwapViewerWindow(string cubesPath, SKColor? forceColor)
+    public SwapViewerWindow(string cubesPath, SKColor? forceColor, bool gpu = false)
     {
         _cubesPath = Path.GetFullPath(cubesPath);
         _forceColor = forceColor;
+        _gpu = gpu;
 
         Title = Path.GetFileName(_cubesPath) + " — Modeler (новый режим)";
         Width = 1180;
@@ -163,7 +169,31 @@ public sealed class SwapViewerWindow : Window
         grid.Children.Add(smallRow);
         grid.Children.Add(_mainHost);
 
-        var root = new DockPanel { Children = { TopDock(_status), grid } };
+        _ssaaBox.Width = 48;
+        _ssaa = Math.Clamp(_gpu ? _settings.Msaa : _settings.Ssaa, 1, 16);
+        _ssaaBox.Text = _ssaa.ToString();
+        _ssaaBox.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center;
+        _ssaaBox.Margin = new Thickness(8, 4);
+        _ssaaBox.TextChanged += OnSsaaTextChanged;
+
+        var ssaaLabel = new TextBlock
+        {
+            Text = _gpu ? "MSAA" : "SSAA",
+            FontFamily = new FontFamily("Segoe UI"),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            Foreground = new SolidColorBrush(Color.Parse("#333333")),
+        };
+
+        var bar = new DockPanel { LastChildFill = true };
+        DockPanel.SetDock(bar, Dock.Top);
+        var ssaaDock = new DockPanel { LastChildFill = false };
+        DockPanel.SetDock(ssaaDock, Dock.Right);
+        ssaaDock.Children.Add(ssaaLabel);
+        ssaaDock.Children.Add(_ssaaBox);
+        bar.Children.Add(ssaaDock);
+        bar.Children.Add(_status);
+
+        var root = new DockPanel { Children = { bar, grid } };
         return root;
     }
 
@@ -200,8 +230,17 @@ public sealed class SwapViewerWindow : Window
     private WriteableBitmap RenderBitmap(Tile tile, int w, int h, bool fast)
     {
         var (forward, up, right) = AxesFor(tile);
+
+        if (_gpu)
+        {
+            using var bitmap = GpuRenderer.Render(w, h, _cubes, forward, up, right, SKColors.White, _forceColor,
+                margin: 16, msaa: _ssaa, zoom: tile.Zoom, panX: tile.PanX, panY: tile.PanY, tree: _tree);
+            return ToWriteableBitmap(bitmap);
+        }
+
+        int samples = fast ? 1 : _ssaa;
         var pixels = ZRenderer.RenderPixels(w, h, _cubes, forward, up, right, SKColors.White, _forceColor,
-            margin: 16, samples: fast ? 1 : ZRenderer.DefaultSamples,
+            margin: 16, samples: samples,
             zoom: tile.Zoom, panX: tile.PanX, panY: tile.PanY);
         return ToWriteableBitmap(pixels, w, h);
     }
@@ -215,6 +254,33 @@ public sealed class SwapViewerWindow : Window
             int rowBytes = width * 4;
             for (int y = 0; y < height; y++)
                 Marshal.Copy(pixels, y * rowBytes, IntPtr.Add(fb.Address, y * fb.RowBytes), rowBytes);
+        }
+        return wb;
+    }
+
+    private void OnSsaaTextChanged(object? sender, TextChangedEventArgs e)
+    {
+        if (!int.TryParse(_ssaaBox.Text?.Trim(), out int value)) return;
+        _ssaa = Math.Clamp(value, 1, 16);
+        if (_gpu) _settings.Msaa = _ssaa;
+        else _settings.Ssaa = _ssaa;
+        _settings.Save();
+        RenderAll();
+    }
+
+    private static WriteableBitmap ToWriteableBitmap(SKBitmap source)
+    {
+        var wb = new WriteableBitmap(new PixelSize(source.Width, source.Height), new Vector(96, 96),
+            PixelFormat.Bgra8888, AlphaFormat.Premul);
+        int srcRowBytes = source.Width * 4;
+        var row = new byte[srcRowBytes];
+        using (var fb = wb.Lock())
+        {
+            for (int y = 0; y < source.Height; y++)
+            {
+                Marshal.Copy(IntPtr.Add(source.GetPixels(), y * source.RowBytes), row, 0, srcRowBytes);
+                Marshal.Copy(row, 0, IntPtr.Add(fb.Address, y * fb.RowBytes), srcRowBytes);
+            }
         }
         return wb;
     }
@@ -351,6 +417,7 @@ public sealed class SwapViewerWindow : Window
         {
             var roots = Resolver.Load(_cubesPath);
             _cubes = TransformResolver.Resolve(roots);
+            _tree = _gpu ? GpuRenderer.BuildTree(_cubes, _forceColor) : null;
             _timestamps = new WriteTimeSet
             {
                 Cubes = File.GetLastWriteTimeUtc(_cubesPath),
